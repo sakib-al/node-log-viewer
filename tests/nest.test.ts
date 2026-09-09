@@ -2,8 +2,8 @@ import 'reflect-metadata';
 import type { AddressInfo } from 'node:net';
 import { Controller, Get, Inject, Module, NotFoundException, type INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LOG_VIEWER_OPTIONS, LogViewerLogger, LogViewerModule, Logger } from '../src/nest.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LOG_VIEWER_OPTIONS, LogViewerExceptionFilter, LogViewerLogger, LogViewerModule, Logger, createLogger } from '../src/nest.js';
 import { toDateKey } from '../src/core/utils.js';
 import { rm, tmpDir } from './helpers.js';
 
@@ -158,5 +158,84 @@ describe('LogViewerModule (Express adapter)', () => {
     const options = app!.get<{ title: string }>(LOG_VIEWER_OPTIONS);
     expect(options.title).toBe('X');
     expect(logger.store.dir).toBe(dir);
+  });
+});
+
+describe('LogViewerExceptionFilter without an injected HttpAdapterHost (duplicate @nestjs/core)', () => {
+  // Simulates a `file:`/`npm link` install where the app's HttpAdapterHost token differs from ours:
+  // Nest injects nothing, and HttpExceptions come from a different @nestjs/common copy.
+  function fakeHost(res: Record<string, unknown>) {
+    return {
+      getType: () => 'http',
+      getArgByIndex: (i: number) => (i === 1 ? res : undefined),
+      switchToHttp: () => ({ getRequest: () => ({ method: 'GET', url: '/x' }), getResponse: () => res }),
+    } as never;
+  }
+  function expressRes() {
+    const calls: Array<[number, unknown]> = [];
+    let code = 200;
+    const res: Record<string, unknown> = {
+      headersSent: false,
+      status(c: number) {
+        code = c;
+        return res;
+      },
+      json(body: unknown) {
+        calls.push([code, body]);
+      },
+    };
+    return { res, calls };
+  }
+  // "foreign" HttpException: right shape, wrong prototype chain
+  class ForeignHttpException extends Error {
+    constructor(private readonly status: number, private readonly body: string | object) {
+      super(typeof body === 'string' ? body : 'http error');
+    }
+    getStatus() { return this.status; }
+    getResponse() { return this.body; }
+  }
+
+  it('replies directly on the response and still records the exception', async () => {
+    const logger = createLogger({ dir, console: false });
+    const filter = new LogViewerExceptionFilter(logger, { logClientErrors: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const a = expressRes();
+    filter.catch(new ForeignHttpException(404, { statusCode: 404, message: 'nothing here' }), fakeHost(a.res));
+    expect(a.calls).toEqual([[404, { statusCode: 404, message: 'nothing here' }]]);
+
+    const b = expressRes();
+    filter.catch(new Error('kaboom'), fakeHost(b.res));
+    expect(b.calls).toEqual([[500, { statusCode: 500, message: 'Internal server error' }]]);
+
+    const c = expressRes();
+    c.res.headersSent = true;
+    c.res.end = vi.fn();
+    filter.catch(new Error('late'), fakeHost(c.res));
+    expect(c.res.end).toHaveBeenCalledOnce();
+
+    expect(warn).toHaveBeenCalledTimes(1); // duplicate-Nest hint printed once
+    expect(warn.mock.calls[0][0]).toMatch(/two copies of @nestjs\/core/);
+    warn.mockRestore();
+
+    await logger.flush();
+    const entries = await logger.reader.readAll(toDateKey());
+    expect(entries.map((e) => [e.level, e.message, e.context?.status])).toEqual([
+      ['warn', 'http error', 404],
+      ['error', 'Error: kaboom', 500],
+      ['error', 'Error: late', 500],
+    ]);
+    await logger.close();
+  });
+
+  it('answers foreign HttpExceptions through the adapter when one is available', () => {
+    const logger = createLogger({ dir, console: false });
+    const reply = vi.fn();
+    const filter = new LogViewerExceptionFilter(logger, {});
+    (filter as unknown as { applicationRef: unknown }).applicationRef = { isHeadersSent: () => false, reply, end: vi.fn() };
+
+    const res = {};
+    filter.catch(new ForeignHttpException(403, 'nope'), fakeHost(res));
+    expect(reply).toHaveBeenCalledWith(res, { statusCode: 403, message: 'nope' }, 403);
   });
 });

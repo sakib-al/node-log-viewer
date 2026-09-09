@@ -164,6 +164,27 @@ export class LogViewerExceptionFilter extends BaseExceptionFilter {
     } catch {
       // never let logging break the response
     }
+
+    const applicationRef = this.applicationRef ?? this.httpAdapterHost?.httpAdapter;
+    if (!applicationRef) {
+      // Happens when two copies of @nestjs/core are loaded (typically a `file:` / `npm link`
+      // install whose own node_modules contains Nest): the HttpAdapterHost token of this copy
+      // never gets injected. Reply directly on the platform response instead of crashing.
+      warnDuplicateNest();
+      replyWithoutAdapter(exception, host);
+      return;
+    }
+    if (isHttpExceptionLike(exception) && !(exception instanceof HttpException)) {
+      // HttpException created by another copy of @nestjs/common: `instanceof` fails, so Nest's
+      // BaseExceptionFilter would treat it as an unknown 500. Answer it like a normal HttpException.
+      const response = host.getArgByIndex(1);
+      if (!applicationRef.isHeadersSent(response)) {
+        applicationRef.reply(response, httpExceptionBody(exception), exception.getStatus());
+      } else {
+        applicationRef.end(response);
+      }
+      return;
+    }
     super.catch(exception, host);
   }
 
@@ -185,7 +206,7 @@ export class LogViewerExceptionFilter extends BaseExceptionFilter {
   }
 
   private record(exception: unknown, host: ArgumentsHost): void {
-    const status = exception instanceof HttpException ? exception.getStatus() : 500;
+    const status = isHttpExceptionLike(exception) ? exception.getStatus() : 500;
     const isServerError = status >= 500;
     if (!isServerError && !this.options.logClientErrors) return;
 
@@ -197,7 +218,7 @@ export class LogViewerExceptionFilter extends BaseExceptionFilter {
         context.url = req.originalUrl ?? req.url;
       }
     }
-    if (exception instanceof HttpException) {
+    if (isHttpExceptionLike(exception)) {
       context.response = exception.getResponse();
     }
     const target = this.viewerLogger.child({ source: 'ExceptionFilter' });
@@ -208,6 +229,79 @@ export class LogViewerExceptionFilter extends BaseExceptionFilter {
       target.warn(message, context);
     }
   }
+}
+
+interface HttpExceptionLike {
+  getStatus(): number;
+  getResponse(): string | object;
+  message: string;
+}
+
+/** Duck-typed HttpException check that also matches instances from a different @nestjs/common copy. */
+function isHttpExceptionLike(value: unknown): value is HttpExceptionLike {
+  if (value instanceof HttpException) return true;
+  const v = value as Partial<HttpExceptionLike> | null;
+  return typeof v === 'object' && v !== null && typeof v.getStatus === 'function' && typeof v.getResponse === 'function';
+}
+
+function httpExceptionBody(exception: HttpExceptionLike): object {
+  const res = exception.getResponse();
+  return typeof res === 'string' ? { statusCode: exception.getStatus(), message: res } : res;
+}
+
+/**
+ * Last-resort reply used when no HttpAdapter is available. Supports Express (`status().json()`),
+ * Fastify (`code().send()`) and raw Node responses.
+ */
+function replyWithoutAdapter(exception: unknown, host: ArgumentsHost): void {
+  if (host.getType() !== 'http') return;
+  const res = host.switchToHttp().getResponse<Record<string, unknown>>();
+  if (!res || typeof res !== 'object') return;
+
+  let status = 500;
+  let body: object = { statusCode: 500, message: 'Internal server error' };
+  if (isHttpExceptionLike(exception)) {
+    status = exception.getStatus();
+    body = httpExceptionBody(exception);
+  } else if (typeof (exception as { statusCode?: unknown })?.statusCode === 'number') {
+    status = (exception as { statusCode: number }).statusCode;
+    body = { statusCode: status, message: (exception as Error).message };
+  }
+
+  const headersSent = Boolean(res.headersSent ?? res.sent);
+  if (headersSent) {
+    if (typeof res.end === 'function') (res.end as () => void)();
+    return;
+  }
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    (res.status as (c: number) => { json(b: object): void })(status).json(body); // Express
+  } else if (typeof res.code === 'function' && typeof res.send === 'function') {
+    (res.code as (c: number) => { send(b: object): void })(status).send(body); // Fastify
+  } else if (typeof res.writeHead === 'function' && typeof res.end === 'function') {
+    (res.writeHead as (c: number, h: Record<string, string>) => void)(status, { 'content-type': 'application/json' });
+    (res.end as (b: string) => void)(JSON.stringify(body));
+  }
+}
+
+/**
+ * Only relevant for local development of this package. A registry install never triggers this:
+ * the tarball has no nested node_modules, so @nestjs/* always resolves to the host app's copy.
+ *
+ * With a `file:` symlink or `npm link`, Node follows the link into this repo and loads the dev
+ * copy of @nestjs/core from here. Two Nest copies means class-based DI tokens (HttpAdapterHost)
+ * and `instanceof HttpException` no longer match. Fix: install as a copy instead of a link, e.g.
+ * `npm install ../node-logger-system --install-links` or `npm pack` + install the .tgz.
+ */
+let duplicateNestWarned = false;
+function warnDuplicateNest(): void {
+  if (duplicateNestWarned) return;
+  duplicateNestWarned = true;
+  console.warn(
+    '[node-log-viewer] Nest did not inject HttpAdapterHost into the log viewer. This usually means two copies of ' +
+      '@nestjs/core are loaded, e.g. node-log-viewer was installed with a `file:` symlink or `npm link` and is using its own ' +
+      'node_modules. Install it as a copy (`npm install <path> --install-links`, or `npm pack` and install the .tgz) or from ' +
+      "the registry so it shares your app's @nestjs/* packages.",
+  );
 }
 
 @Module({})
@@ -250,6 +344,7 @@ export class LogViewerModule implements OnModuleInit {
     const adapter = this.adapterHost?.httpAdapter;
     if (!adapter || typeof adapter.use !== 'function') {
       console.warn('[node-log-viewer] HttpAdapterHost is not available; the log viewer UI was not mounted.');
+      warnDuplicateNest();
       return;
     }
     const mount = normalizeMount(this.options.path ?? '/logs');
