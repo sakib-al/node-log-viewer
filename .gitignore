@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+ui/dist/
+
+# logs written by node-log-viewer (examples, tests, local runs)
+logs/
+examples/**/logs/
+*.log
+
+# tooling
+.DS_Store
+coverage/
+*.tsbuildinfo
+.vite/

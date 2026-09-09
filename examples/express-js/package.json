@@ -1,0 +1,13 @@
+{
+  "name": "example-express-js",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Plain JavaScript (CommonJS, no TypeScript) Express app using node-log-viewer",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "node-log-viewer": "workspace:*"
+  }
+}
