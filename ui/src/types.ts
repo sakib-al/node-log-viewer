@@ -74,3 +74,19 @@ export interface PluginView {
   config: Record<string, unknown>;
   secretsSet: string[];
 }
+
+/** A plugin shipped with the package that is not registered on the logger. */
+export interface AvailablePlugin {
+  name: string;
+  title: string;
+  description: string;
+  factory: string;
+  credentialOption: string;
+  envVar: string;
+  docsUrl: string;
+}
+
+export interface PluginsResponse {
+  plugins: PluginView[];
+  available: AvailablePlugin[];
+}

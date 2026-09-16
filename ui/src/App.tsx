@@ -140,7 +140,15 @@ export default function App() {
       {meta && (
         <footer className="flex h-7 shrink-0 items-center justify-between border-t border-slate-200 bg-white px-4 font-mono text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
           <span className="truncate">{meta.dir}</span>
-          <span>node-log-viewer</span>
+          <a
+            href="https://www.npmjs.com/package/node-log-viewer"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="node-log-viewer on npm"
+            className="hover:text-slate-900 hover:underline dark:hover:text-slate-100"
+          >
+            node-log-viewer{meta.version ? ` v${meta.version}` : ''}
+          </a>
         </footer>
       )}
     </div>

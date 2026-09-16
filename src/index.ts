@@ -22,6 +22,10 @@ export { PluginRegistry } from './plugins/registry.js';
 export type { LogViewerPlugin, PluginConfig, PluginSettingsField } from './plugins/plugin.js';
 export { DiscordWebhookPlugin, discordPlugin, buildDiscordPayload, isDiscordWebhookUrl } from './plugins/discord.js';
 export type { DiscordPluginOptions } from './plugins/discord.js';
+export { SlackWebhookPlugin, slackPlugin, buildSlackPayload, isSlackWebhookUrl } from './plugins/slack.js';
+export type { SlackPluginOptions } from './plugins/slack.js';
+export { BUILTIN_PLUGINS } from './plugins/catalog.js';
+export type { BuiltinPluginInfo } from './plugins/catalog.js';
 
 export { createLogViewer } from './server/handler.js';
 export type { LogViewerHandler, LogViewerOptions } from './server/handler.js';

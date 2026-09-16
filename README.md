@@ -5,7 +5,7 @@ File-based logging for Node.js and NestJS with a built-in web UI, inspired by La
 - Writes one JSON-lines file per day (`logs/2026-09-05.log`) and keeps them out of git automatically.
 - Ships a React log viewer you mount inside your app (`/logs`): browse by date, filter by level (All / Debug / Info / Warning / Error), full-text search, expandable stack traces and context, live refresh, dark mode.
 - Configure once with `initLogger()`, then `import { log } from 'node-log-viewer'` in any file: `log.exception(err)` for `catch` blocks, plus `debug` / `info` / `warn` / `error` and child loggers with a `source`.
-- Plugin system: forward entries anywhere. Discord webhook plugin included and configurable from the UI.
+- Plugin system: forward entries anywhere. Discord and Slack webhook plugins included and configurable from the UI.
 - Works in plain JavaScript (CommonJS) or TypeScript, Express or raw `http`, and NestJS via `node-log-viewer/nest`.
 - Zero runtime dependencies. Optional basic-auth (or your own `authorize` hook) for the viewer.
 
@@ -242,6 +242,16 @@ Returns a Node `(req, res, next?)` handler usable with Express (`app.use('/logs'
 
 A plugin is a log sink. It receives every entry at or above its `minLevel` and can forward it anywhere. Failures inside a plugin are caught and reported to the console; they never affect your app or the file log.
 
+Built-in plugins: **Discord** (`discordPlugin`) and **Slack** (`slackPlugin`). Register as many as you like; each has its own webhook, minimum level and settings:
+
+```ts
+initLogger({
+  plugins: [discordPlugin(), slackPlugin()],
+});
+```
+
+The **Plugins** page in the UI lists every registered plugin in a collapsible panel with its settings and a test button. Built-in plugins you have not registered appear under **Available** with the exact code to add them (Node.js and NestJS variants); plugins are registered in code so credentials can come from your environment, then managed from the UI.
+
 ### Discord (built in)
 
 ```ts
@@ -263,6 +273,27 @@ initLogger({
 Create the webhook in Discord: Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL. Open the viewer, go to **Plugins**, paste the URL, choose the minimum level and click **Send test message**. Settings are saved to `<dir>/.log-viewer.json`, which lives next to the log files and is covered by the same `.gitignore`. Saved settings are re-applied automatically on the next start.
 
 Entries are queued and delivered one at a time; Discord `429` rate limits are honoured using `retry_after`.
+
+### Slack (built in)
+
+```ts
+import { initLogger, slackPlugin } from 'node-log-viewer';
+
+initLogger({
+  plugins: [
+    slackPlugin({
+      webhookUrl: process.env.SLACK_WEBHOOK_URL, // or leave empty and paste it in the UI
+      minLevel: 'error',                         // default
+      mention: '<!here>',                        // or '<!channel>', '<@U012ABCDEF>'
+      appName: 'my-api',
+    }),
+  ],
+});
+```
+
+Create an incoming webhook in Slack: [api.slack.com/apps](https://api.slack.com/apps) → Create New App (from scratch) → **Incoming Webhooks** → Activate → **Add New Webhook to Workspace** → pick a channel → copy the `https://hooks.slack.com/services/…` URL. As with Discord, you can paste it on the **Plugins** page instead of passing it in code, and use **Send test message** to verify it.
+
+Messages use a colour bar per level (grey / blue / yellow / red) and Block Kit sections for level, time, source, stack trace and context, with a plain-text fallback for notifications. Slack `429` responses are retried using the `Retry-After` header.
 
 ### Writing your own plugin
 
