@@ -33,7 +33,19 @@ import { isError } from './core/utils.js';
 import type { AuthOptions } from './server/auth.js';
 import { createLogViewer } from './server/handler.js';
 
-export { Logger, createLogger, discordPlugin, DiscordWebhookPlugin, createLogViewer, log, getLogger, initLogger, setLogger } from './index.js';
+export {
+  Logger,
+  createLogger,
+  discordPlugin,
+  DiscordWebhookPlugin,
+  slackPlugin,
+  SlackWebhookPlugin,
+  createLogViewer,
+  log,
+  getLogger,
+  initLogger,
+  setLogger,
+} from './index.js';
 export type * from './index.js';
 
 export const LOG_VIEWER_OPTIONS = 'NODE_LOG_VIEWER_OPTIONS';

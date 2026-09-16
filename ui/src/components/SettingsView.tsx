@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api';
-import type { PluginView, SettingsField } from '../types';
+import type { AvailablePlugin, PluginView, SettingsField } from '../types';
 import { cx } from '../lib';
-import { PlugIcon } from './Icons';
+import { CheckIcon, ChevronIcon, CopyIcon, PlugIcon } from './Icons';
 
 interface Props {
   allowEdit: boolean;
@@ -10,19 +10,32 @@ interface Props {
 
 export function SettingsView({ allowEdit }: Props) {
   const [plugins, setPlugins] = useState<PluginView[] | null>(null);
+  const [available, setAvailable] = useState<AvailablePlugin[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
 
   const load = () => {
     api
       .plugins()
-      .then((p) => {
-        setPlugins(p);
+      .then(({ plugins: list, available: avail }) => {
+        setPlugins(list);
+        setAvailable(avail);
         setError(null);
+        // First visit: expand the first registered plugin (or the first available one when none is registered).
+        setOpen((prev) => (prev.size ? prev : new Set([list[0]?.name ?? (avail[0] ? `available:${avail[0].name}` : '')])));
       })
       .catch((e: Error) => setError(e.message));
   };
 
   useEffect(load, []);
+
+  const toggle = (key: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   return (
     <div className="h-full overflow-y-auto">
@@ -41,25 +54,138 @@ export function SettingsView({ allowEdit }: Props) {
           </div>
         )}
 
-        {plugins && plugins.length === 0 && (
-          <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-            <PlugIcon className="mx-auto mb-2 text-slate-400" width={24} height={24} />
-            No plugins registered. Add one in code, for example:
-            <pre className="mx-auto mt-3 max-w-md rounded-lg bg-slate-900 p-3 text-left font-mono text-xs text-slate-100">
-              {`import { createLogger, discordPlugin } from 'node-log-viewer';\n\nconst logger = createLogger({\n  plugins: [discordPlugin()],\n});`}
-            </pre>
-          </div>
+        {plugins && (
+          <section className="space-y-3">
+            <SectionHeading count={plugins.length}>Registered</SectionHeading>
+            {plugins.length === 0 && (
+              <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                <PlugIcon className="mx-auto mb-2 text-slate-400" width={24} height={24} />
+                No plugins registered yet. Pick one from the list below and add it to your logger setup in code; it will appear
+                here with its settings once the app restarts.
+              </div>
+            )}
+            {plugins.map((p) => (
+              <AccordionItem
+                key={p.name}
+                open={open.has(p.name)}
+                onToggle={() => toggle(p.name)}
+                title={p.title}
+                name={p.name}
+                subtitle={p.description}
+                badge={
+                  <Badge tone={p.enabled ? 'ok' : 'muted'}>{p.enabled ? 'Enabled' : 'Disabled'}</Badge>
+                }
+              >
+                <PluginPanel
+                  plugin={p}
+                  allowEdit={allowEdit}
+                  onSaved={(np) => setPlugins((list) => list?.map((x) => (x.name === np.name ? np : x)) ?? null)}
+                />
+              </AccordionItem>
+            ))}
+          </section>
         )}
 
-        {plugins?.map((p) => (
-          <PluginCard key={p.name} plugin={p} allowEdit={allowEdit} onSaved={(np) => setPlugins((list) => list?.map((x) => (x.name === np.name ? np : x)) ?? null)} />
-        ))}
+        {available.length > 0 && (
+          <section className="space-y-3">
+            <SectionHeading count={available.length}>Available</SectionHeading>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              These plugins ship with node-log-viewer but are not added to your logger. Plugins are registered in code so
+              that credentials can come from your environment; once registered you can manage them from this page.
+            </p>
+            {available.map((p) => {
+              const key = `available:${p.name}`;
+              return (
+                <AccordionItem
+                  key={key}
+                  open={open.has(key)}
+                  onToggle={() => toggle(key)}
+                  title={p.title}
+                  name={p.name}
+                  subtitle={p.description}
+                  badge={<Badge tone="warn">Not registered</Badge>}
+                >
+                  <SetupPanel plugin={p} />
+                </AccordionItem>
+              );
+            })}
+          </section>
+        )}
       </div>
     </div>
   );
 }
 
-function PluginCard({ plugin, allowEdit, onSaved }: { plugin: PluginView; allowEdit: boolean; onSaved: (p: PluginView) => void }) {
+function SectionHeading({ children, count }: { children: ReactNode; count: number }) {
+  return (
+    <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      {children}
+      <span className="rounded-full bg-slate-100 px-1.5 py-px text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{count}</span>
+    </h3>
+  );
+}
+
+function Badge({ tone, children }: { tone: 'ok' | 'muted' | 'warn'; children: ReactNode }) {
+  return (
+    <span
+      className={cx(
+        'rounded-full px-2 py-px text-[11px] font-semibold',
+        tone === 'ok' && 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200',
+        tone === 'muted' && 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
+        tone === 'warn' && 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200',
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function AccordionItem({
+  open,
+  onToggle,
+  title,
+  name,
+  subtitle,
+  badge,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  title: string;
+  name: string;
+  subtitle?: string;
+  badge?: ReactNode;
+  children: ReactNode;
+}) {
+  const panelId = `plugin-panel-${name}`;
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={onToggle}
+        className={cx(
+          'flex w-full items-start justify-between gap-4 rounded-xl px-5 py-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800/60',
+          open && 'rounded-b-none border-b border-slate-100 dark:border-slate-800',
+        )}
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold">{title}</h3>
+            {badge}
+            <code className="rounded bg-slate-100 px-1.5 py-px font-mono text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{name}</code>
+          </div>
+          {subtitle && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>}
+        </div>
+        <ChevronIcon className={cx('mt-1 shrink-0 text-slate-400 transition-transform', open && 'rotate-90')} />
+      </button>
+      {open && <div id={panelId}>{children}</div>}
+    </section>
+  );
+}
+
+function PluginPanel({ plugin, allowEdit, onSaved }: { plugin: PluginView; allowEdit: boolean; onSaved: (p: PluginView) => void }) {
   const [form, setForm] = useState<Record<string, unknown>>(plugin.config);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -97,27 +223,7 @@ function PluginCard({ plugin, allowEdit, onSaved }: { plugin: PluginView; allowE
   };
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold">{plugin.title}</h3>
-            <span
-              className={cx(
-                'rounded-full px-2 py-px text-[11px] font-semibold',
-                plugin.enabled
-                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200'
-                  : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
-              )}
-            >
-              {plugin.enabled ? 'Enabled' : 'Disabled'}
-            </span>
-          </div>
-          {plugin.description && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{plugin.description}</p>}
-        </div>
-        <code className="rounded bg-slate-100 px-2 py-1 font-mono text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">{plugin.name}</code>
-      </header>
-
+    <>
       <div className="space-y-4 px-5 py-4">
         {plugin.settingsSchema.length === 0 && (
           <p className="text-sm text-slate-500 dark:text-slate-400">This plugin has no editable settings.</p>
@@ -164,7 +270,104 @@ function PluginCard({ plugin, allowEdit, onSaved }: { plugin: PluginView; allowE
           )}
         </div>
       </footer>
-    </section>
+    </>
+  );
+}
+
+type Flavor = 'node' | 'nest';
+
+function setupSnippet(p: AvailablePlugin, flavor: Flavor): string {
+  const call = `${p.factory}({ ${p.credentialOption}: process.env.${p.envVar} })`;
+  if (flavor === 'nest') {
+    return [
+      `// app.module.ts`,
+      `import { LogViewerModule, ${p.factory} } from 'node-log-viewer/nest';`,
+      ``,
+      `@Module({`,
+      `  imports: [`,
+      `    LogViewerModule.forRoot({`,
+      `      dir: 'logs',`,
+      `      plugins: [${call}],`,
+      `    }),`,
+      `  ],`,
+      `})`,
+      `export class AppModule {}`,
+    ].join('\n');
+  }
+  return [
+    `// app.js - where you call initLogger()`,
+    `const { initLogger, ${p.factory} } = require('node-log-viewer');`,
+    ``,
+    `initLogger({`,
+    `  dir: 'logs',`,
+    `  plugins: [${call}],`,
+    `});`,
+  ].join('\n');
+}
+
+function SetupPanel({ plugin }: { plugin: AvailablePlugin }) {
+  const [flavor, setFlavor] = useState<Flavor>('node');
+  const [copied, setCopied] = useState(false);
+  const code = setupSnippet(plugin, flavor);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable (http origin); the user can still select the text
+    }
+  };
+
+  return (
+    <div className="space-y-4 px-5 py-4">
+      <ol className="list-decimal space-y-1.5 pl-5 text-sm text-slate-600 dark:text-slate-300">
+        <li>
+          Create an incoming webhook in {plugin.title} and copy its URL (
+          <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-900 dark:hover:text-slate-100">
+            {plugin.title} docs
+          </a>
+          ).
+        </li>
+        <li>
+          Register the plugin where you configure the logger. You can pass the URL from an environment variable now, or leave it
+          out and paste it on this page later.
+        </li>
+        <li>Restart the app. {plugin.title} will move to the “Registered” list above with its settings and a test button.</li>
+      </ol>
+
+      <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800/60">
+          <div className="flex gap-1">
+            {(['node', 'nest'] as Flavor[]).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFlavor(f)}
+                className={cx(
+                  'rounded-md px-2.5 py-1 text-xs font-medium',
+                  flavor === f
+                    ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-900 dark:text-slate-100'
+                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100',
+                )}
+              >
+                {f === 'node' ? 'Node.js / Express' : 'NestJS'}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={copy}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-200 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+          >
+            {copied ? <CheckIcon width={12} height={12} /> : <CopyIcon width={12} height={12} />}
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+        <pre className="overflow-x-auto bg-slate-900 p-3 font-mono text-xs leading-relaxed text-slate-100">{code}</pre>
+      </div>
+    </div>
   );
 }
 

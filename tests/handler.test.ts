@@ -3,11 +3,12 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createLogViewer, createLogger, discordPlugin, type Logger, type NodeHandler } from '../src/index.js';
+import { createLogViewer, createLogger, discordPlugin, slackPlugin, type Logger, type NodeHandler } from '../src/index.js';
 import { toDateKey } from '../src/core/utils.js';
 import { fakeFetch, rm, tmpDir } from './helpers.js';
 
 const WEBHOOK = 'https://discord.com/api/webhooks/42/EXAMPLE';
+const SLACK_WEBHOOK = 'https://hooks.slack.com/services/T000/B000/EXAMPLE';
 
 let dir: string;
 let logger: Logger;
@@ -141,6 +142,9 @@ describe('createLogViewer handler', () => {
     expect(list.body.plugins).toHaveLength(1);
     expect(list.body.plugins[0]).toMatchObject({ name: 'discord', enabled: false, configurable: true, testable: true, secretsSet: [] });
     expect(list.body.plugins[0].settingsSchema.some((f: { key: string }) => f.key === 'webhookUrl')).toBe(true);
+    // built-ins that are not registered are advertised so the UI can show setup instructions
+    expect(list.body.available.map((p: { name: string }) => p.name)).toEqual(['slack']);
+    expect(list.body.available[0]).toMatchObject({ factory: 'slackPlugin', credentialOption: 'webhookUrl', envVar: 'SLACK_WEBHOOK_URL' });
 
     // invalid config -> 400 and nothing persisted
     const bad = await json(
@@ -191,6 +195,46 @@ describe('createLogViewer handler', () => {
     expect((await fetch(`${ro}/api/plugins/discord`, { method: 'PUT', body: '{}' })).status).toBe(403);
     list = await json(await fetch(`${ro}/api/plugins`));
     expect(list.status).toBe(200);
+  });
+
+  it('runs Discord and Slack side by side: independent config, fan-out delivery, nothing left in "available"', async () => {
+    const discord = fakeFetch([{ status: 204 }, { status: 204 }]);
+    const slack = fakeFetch([{ status: 200 }, { status: 200 }]);
+    logger.use(discordPlugin({ fetch: discord.fetch }));
+    logger.use(slackPlugin({ fetch: slack.fetch }));
+    const base = `${await listen(createLogViewer({ logger, basePath: '/l' }))}/l`;
+
+    const list = await json(await fetch(`${base}/api/plugins`));
+    expect(list.body.plugins.map((p: { name: string }) => p.name)).toEqual(['discord', 'slack']);
+    expect(list.body.available).toEqual([]);
+
+    // configure each through the API with its own webhook + level
+    const put = (name: string, body: unknown) =>
+      fetch(`${base}/api/plugins/${name}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    expect((await put('discord', { enabled: true, webhookUrl: WEBHOOK, minLevel: 'error' })).status).toBe(200);
+    expect((await put('slack', { enabled: true, webhookUrl: SLACK_WEBHOOK, minLevel: 'warn', mention: '<!here>' })).status).toBe(200);
+    // a Discord URL is rejected by the Slack plugin and vice versa
+    expect((await put('slack', { enabled: true, webhookUrl: WEBHOOK })).status).toBe(400);
+    expect((await put('discord', { enabled: true, webhookUrl: SLACK_WEBHOOK })).status).toBe(400);
+
+    const persisted = JSON.parse(await fs.readFile(path.join(dir, '.log-viewer.json'), 'utf8'));
+    expect(persisted.plugins.discord).toMatchObject({ webhookUrl: WEBHOOK, minLevel: 'error' });
+    expect(persisted.plugins.slack).toMatchObject({ webhookUrl: SLACK_WEBHOOK, minLevel: 'warn', mention: '<!here>' });
+
+    // warn -> Slack only; error -> both
+    logger.warn('disk almost full');
+    logger.exception(new Error('db down'));
+    await logger.flush();
+    expect(discord.calls.map((c) => c.url)).toEqual([WEBHOOK]);
+    expect(slack.calls.map((c) => c.url)).toEqual([SLACK_WEBHOOK, SLACK_WEBHOOK]);
+    expect((slack.calls[0].json as { text: string }).text).toBe('<!here> [WARN] disk almost full');
+    expect((slack.calls[1].json as { text: string }).text).toContain('db down');
+    expect((discord.calls[0].json as { embeds: Array<{ title: string }> }).embeds[0].title).toContain('db down');
+
+    // each test button hits its own webhook
+    expect((await fetch(`${base}/api/plugins/slack/test`, { method: 'POST' })).status).toBe(200);
+    expect(slack.calls).toHaveLength(3);
+    expect(discord.calls).toHaveLength(1);
   });
 
   it('a fresh logger re-applies settings saved through the UI', async () => {

@@ -1,4 +1,4 @@
-import type { DateFileInfo, LevelFilter, Meta, PluginView, ReadResult } from './types';
+import type { DateFileInfo, LevelFilter, Meta, PluginView, PluginsResponse, ReadResult } from './types';
 
 declare global {
   interface Window {
@@ -52,7 +52,7 @@ export const api = {
     return request<ReadResult>(`/logs?${q.toString()}`);
   },
   deleteDate: (date: string) => request<{ deleted: boolean }>(`/dates/${date}`, { method: 'DELETE' }),
-  plugins: () => request<{ plugins: PluginView[] }>('/plugins').then((r) => r.plugins),
+  plugins: () => request<PluginsResponse>('/plugins').then((r) => ({ plugins: r.plugins, available: r.available ?? [] })),
   savePlugin: (name: string, config: Record<string, unknown>) =>
     request<{ plugin: PluginView }>(`/plugins/${name}`, { method: 'PUT', body: JSON.stringify(config) }).then((r) => r.plugin),
   testPlugin: (name: string) => request<{ ok: true }>(`/plugins/${name}/test`, { method: 'POST' }),

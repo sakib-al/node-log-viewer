@@ -1,7 +1,7 @@
 {
   "name": "node-log-viewer",
-  "version": "0.1.0",
-  "description": "Date-wise file logging for Node.js and NestJS with an embedded web UI log viewer and a plugin system (Discord notifications built in).",
+  "version": "0.2.0",
+  "description": "Date-wise file logging for Node.js and NestJS with an embedded web UI log viewer and a plugin system (Discord and Slack notifications built in).",
   "keywords": [
     "logger",
     "log-viewer",
@@ -9,6 +9,7 @@
     "nestjs",
     "express",
     "discord",
+    "slack",
     "log viewer ui"
   ],
   "license": "MIT",

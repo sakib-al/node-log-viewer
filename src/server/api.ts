@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from '../core/logger.js';
 import { LOG_LEVELS, isLogLevel } from '../core/types.js';
 import { isDateKey } from '../core/utils.js';
+import { BUILTIN_PLUGINS } from '../plugins/catalog.js';
 import type { LogViewerPlugin, PluginConfig } from '../plugins/plugin.js';
 import { HttpError, readJsonBody, sendJson } from './http.js';
 
@@ -119,7 +120,13 @@ export async function handleApi(ctx: ApiContext, req: IncomingMessage, res: Serv
 
   if (method === 'GET' && route === '/plugins') {
     await logger.ready();
-    sendJson(res, 200, { plugins: logger.plugins.list().map(pluginView) });
+    const registered = logger.plugins.list();
+    const names = new Set(registered.map((p) => p.name));
+    sendJson(res, 200, {
+      plugins: registered.map(pluginView),
+      // Built-in plugins the developer has not added to the logger yet; the UI shows setup instructions.
+      available: BUILTIN_PLUGINS.filter((p) => !names.has(p.name)),
+    });
     return true;
   }
 

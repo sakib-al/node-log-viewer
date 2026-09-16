@@ -1,6 +1,6 @@
 // Plain JavaScript (CommonJS) - no TypeScript required.
 const express = require('express');
-const { initLogger, createLogViewer, discordPlugin, log } = require('node-log-viewer');
+const { initLogger, createLogViewer, discordPlugin, slackPlugin, log } = require('node-log-viewer');
 const usersRouter = require('./users');
 
 // 1. Initialise the global logger ONCE. Files go to ./logs/YYYY-MM-DD.log (git-ignored automatically).
@@ -11,6 +11,7 @@ initLogger({
   plugins: [
     // Configure the webhook here or later from the UI (Plugins tab).
     discordPlugin({ webhookUrl: process.env.DISCORD_WEBHOOK_URL, minLevel: 'error' }),
+    slackPlugin({ webhookUrl: process.env.SLACK_WEBHOOK_URL, minLevel: 'error' }),
   ],
 });
 
