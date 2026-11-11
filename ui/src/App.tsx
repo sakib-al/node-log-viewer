@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { INITIAL_TITLE, api } from './api';
+import { INITIAL_TITLE, ApiError, api, clearAuth, hasStoredAuth, setBasicCredentials } from './api';
 import type { DateFileInfo, Meta } from './types';
 import { cx } from './lib';
 import { Sidebar } from './components/Sidebar';
 import { LogsView } from './components/LogsView';
 import { SettingsView } from './components/SettingsView';
+import { LoginView } from './components/LoginView';
 import { ListIcon, MenuIcon, MoonIcon, SettingsIcon, SunIcon } from './components/Icons';
 
 type View = 'logs' | 'settings';
@@ -32,12 +33,16 @@ export default function App() {
   const [loadingDates, setLoadingDates] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [authRealm, setAuthRealm] = useState<string | undefined>();
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [booting, setBooting] = useState(true);
   const { dark, toggle } = useTheme();
 
   const title = meta?.title ?? INITIAL_TITLE;
   useEffect(() => {
-    document.title = title;
-  }, [title]);
+    document.title = needsAuth ? `Sign in · ${title}` : title;
+  }, [title, needsAuth]);
 
   const loadDates = useCallback(async () => {
     try {
@@ -46,16 +51,68 @@ export default function App() {
       setError(null);
       setSelected((cur) => (cur && list.some((d) => d.date === cur) ? cur : list[0]?.date ?? null));
     } catch (e) {
+      if (e instanceof ApiError && e.status === 401 && e.authRequired) throw e;
       setError((e as Error).message);
     } finally {
       setLoadingDates(false);
     }
   }, []);
 
-  useEffect(() => {
-    api.meta().then(setMeta).catch(() => undefined);
-    void loadDates();
+  const bootstrap = useCallback(async () => {
+    setBooting(true);
+    try {
+      const nextMeta = await api.meta();
+      setMeta(nextMeta);
+      setNeedsAuth(false);
+      setAuthError(null);
+      setLoadingDates(true);
+      await loadDates();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401 && e.authRequired) {
+        setNeedsAuth(true);
+        setAuthRealm(e.realm);
+        if (hasStoredAuth()) {
+          clearAuth();
+          setAuthError('Invalid username or password');
+        }
+        return;
+      }
+      setError((e as Error).message);
+    } finally {
+      setBooting(false);
+    }
   }, [loadDates]);
+
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
+
+  const onLogin = async (username: string, password: string) => {
+    setBasicCredentials(username, password);
+    setAuthError(null);
+    try {
+      const nextMeta = await api.meta();
+      setMeta(nextMeta);
+      setNeedsAuth(false);
+      setLoadingDates(true);
+      await loadDates();
+    } catch (e) {
+      clearAuth();
+      if (e instanceof ApiError && e.status === 401) {
+        throw new Error('Invalid username or password');
+      }
+      throw e instanceof Error ? e : new Error('Sign in failed');
+    }
+  };
+
+  const onLogout = () => {
+    clearAuth();
+    setMeta(null);
+    setDates([]);
+    setSelected(null);
+    setNeedsAuth(true);
+    setAuthError(null);
+  };
 
   const reload = useCallback(() => {
     void loadDates();
@@ -68,9 +125,36 @@ export default function App() {
       await api.deleteDate(date);
       await loadDates();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 401 && e.authRequired) {
+        clearAuth();
+        setNeedsAuth(true);
+        setAuthError('Session expired. Please sign in again.');
+        return;
+      }
       setError((e as Error).message);
     }
   };
+
+  if (booting && !needsAuth) {
+    return (
+      <div className="flex h-full items-center justify-center bg-slate-50 text-sm text-slate-500 dark:bg-slate-950 dark:text-slate-400">
+        Loading…
+      </div>
+    );
+  }
+
+  if (needsAuth) {
+    return (
+      <LoginView
+        title={title}
+        realm={authRealm}
+        error={authError}
+        dark={dark}
+        onToggleTheme={toggle}
+        onSubmit={onLogin}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -106,6 +190,15 @@ export default function App() {
               </span>
               Live
             </label>
+          )}
+          {hasStoredAuth() && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              Sign out
+            </button>
           )}
           <button
             type="button"

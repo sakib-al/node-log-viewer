@@ -331,11 +331,18 @@ Anything with a `settingsSchema` gets a generated form on the UI's Plugins page.
 
 ## Protecting the viewer
 
-Off by default so it never gets in the way during development. Turn it on for shared or production environments:
+Off by default so it never gets in the way during development. Turn it on for shared or production environments.
+
+Basic auth gates the JSON API and shows a **sign-in page** in the UI (credentials are sent as `Authorization: Basic …`). The browser's native login dialog is not used.
 
 ```ts
 createLogViewer({
-  auth: { type: 'basic', username: 'admin', password: process.env.LOGS_PASSWORD },
+  auth: {
+    type: 'basic',
+    username: 'admin',
+    password: process.env.LOGS_PASSWORD!,
+    realm: 'My API logs', // optional label on the sign-in page
+  },
 });
 
 // or plug in your own session / token check

@@ -2,3 +2,5 @@ packages:
   - "."
   - "ui"
   - "examples/*"
+allowBuilds:
+  esbuild: set this to true or false

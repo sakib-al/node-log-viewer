@@ -53,16 +53,17 @@ export function createLogViewer(options: LogViewerOptions = {}): LogViewerHandle
   const handler = async (req: IncomingMessage, res: ServerResponse, next?: (err?: unknown) => void): Promise<void> => {
     const { base, path, query } = resolveRequest(req, options.basePath);
     try {
-      if (!(await checkAuth(options.auth, req, res))) return;
-
-      const handled = await handleApi(
-        { logger, title, version: VERSION, base, allowDelete, allowPluginConfig },
-        req,
-        res,
-        path,
-        query,
-      );
-      if (handled) return;
+      if (path.startsWith('/api/')) {
+        if (!(await checkAuth(options.auth, req, res))) return;
+        await handleApi(
+          { logger, title, version: VERSION, base, allowDelete, allowPluginConfig },
+          req,
+          res,
+          path,
+          query,
+        );
+        return;
+      }
 
       const method = (req.method ?? 'GET').toUpperCase();
       if (method !== 'GET' && method !== 'HEAD') {

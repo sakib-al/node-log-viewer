@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
+import { sendJson } from './http.js';
 
 export type AuthOptions =
   | {
       type: 'basic';
       username: string;
       password: string;
-      /** Realm shown in the browser prompt. Default `node-log-viewer`. */
+      /** Realm label (shown on the login page). Default `node-log-viewer`. */
       realm?: string;
     }
   | {
@@ -22,7 +23,13 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
-/** Returns true when the request may proceed; otherwise writes a 401 response and returns false. */
+/**
+ * Returns true when the request may proceed; otherwise writes a 401 JSON response and returns false.
+ *
+ * Intentionally does **not** send `WWW-Authenticate` for basic auth — that header triggers the
+ * browser's native credential dialog. The SPA login page collects credentials instead and sends
+ * an `Authorization: Basic …` header on API calls.
+ */
 export async function checkAuth(auth: AuthOptions | undefined, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   if (!auth) return true;
 
@@ -35,10 +42,12 @@ export async function checkAuth(auth: AuthOptions | undefined, req: IncomingMess
       const pass = idx >= 0 ? decoded.slice(idx + 1) : '';
       if (safeEqual(user, auth.username) && safeEqual(pass, auth.password)) return true;
     }
-    res.statusCode = 401;
-    res.setHeader('www-authenticate', `Basic realm="${(auth.realm ?? 'node-log-viewer').replace(/"/g, '')}", charset="UTF-8"`);
-    res.setHeader('content-type', 'text/plain; charset=utf-8');
-    res.end('Unauthorized');
+    sendJson(res, 401, {
+      error: 'Unauthorized',
+      authRequired: true,
+      authType: 'basic',
+      realm: auth.realm ?? 'node-log-viewer',
+    });
     return false;
   }
 
@@ -49,8 +58,10 @@ export async function checkAuth(auth: AuthOptions | undefined, req: IncomingMess
     ok = false;
   }
   if (ok) return true;
-  res.statusCode = 401;
-  res.setHeader('content-type', 'text/plain; charset=utf-8');
-  res.end('Unauthorized');
+  sendJson(res, 401, {
+    error: 'Unauthorized',
+    authRequired: true,
+    authType: 'custom',
+  });
   return false;
 }

@@ -23,8 +23,13 @@ app.use(
   '/logs',
   createLogViewer({
     title: 'Example API logs',
-    // Optional protection (off by default):
-    // auth: { type: 'basic', username: 'admin', password: process.env.LOGS_PASSWORD },
+    // Basic auth: the UI shows a sign-in page (no browser popup). Default password: password
+    auth: {
+      type: 'basic',
+      username: process.env.LOGS_USERNAME || 'admin',
+      password: process.env.LOGS_PASSWORD || 'password',
+      realm: 'Example API logs',
+    },
   }),
 );
 

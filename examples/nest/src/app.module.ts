@@ -10,7 +10,13 @@ import { AppController } from './app.controller';
       title: 'Nest example logs',
       plugins: [discordPlugin({ webhookUrl: process.env.DISCORD_WEBHOOK_URL })],
       catchExceptions: true, // global filter: unhandled 5xx exceptions are recorded
-      // auth: { type: 'basic', username: 'admin', password: process.env.LOGS_PASSWORD! },
+      // Basic auth: the UI shows a sign-in page (no browser popup). Default password: password
+      auth: {
+        type: 'basic',
+        username: process.env.LOGS_USERNAME || 'admin',
+        password: process.env.LOGS_PASSWORD || 'password',
+        realm: 'Nest example logs',
+      },
     }),
   ],
   controllers: [AppController],

@@ -112,11 +112,23 @@ describe('createLogViewer handler', () => {
     expect((await fetch(`${base2}/api/dates/..%2F..%2Fetc`, { method: 'DELETE' })).status).toBe(404);
   });
 
-  it('enforces basic auth when configured', async () => {
-    const base = `${await listen(createLogViewer({ logger, basePath: '/l', auth: { type: 'basic', username: 'admin', password: 's3cret' } }))}/l`;
+  it('enforces basic auth when configured (JSON 401, no browser challenge)', async () => {
+    const base = `${await listen(
+      createLogViewer({
+        logger,
+        basePath: '/l',
+        auth: { type: 'basic', username: 'admin', password: 's3cret', realm: 'Test logs' },
+      }),
+    )}/l`;
     const denied = await fetch(`${base}/api/meta`);
     expect(denied.status).toBe(401);
-    expect(denied.headers.get('www-authenticate')).toContain('Basic');
+    // Avoid WWW-Authenticate so the browser does not show its native login dialog.
+    expect(denied.headers.get('www-authenticate')).toBeNull();
+    const deniedBody = (await denied.json()) as { error: string; authRequired: boolean; authType: string; realm: string };
+    expect(deniedBody).toMatchObject({ error: 'Unauthorized', authRequired: true, authType: 'basic', realm: 'Test logs' });
+
+    // SPA shell stays public so the React login page can load.
+    expect((await fetch(`${base}/`)).status).toBe(200);
 
     const wrong = await fetch(`${base}/api/meta`, { headers: { authorization: `Basic ${Buffer.from('admin:nope').toString('base64')}` } });
     expect(wrong.status).toBe(401);
@@ -129,7 +141,10 @@ describe('createLogViewer handler', () => {
     const base = `${await listen(
       createLogViewer({ logger, basePath: '/l', auth: { type: 'custom', authorize: (req) => req.headers['x-token'] === 'yes' } }),
     )}/l`;
-    expect((await fetch(`${base}/api/meta`)).status).toBe(401);
+    const denied = await fetch(`${base}/api/meta`);
+    expect(denied.status).toBe(401);
+    expect(denied.headers.get('www-authenticate')).toBeNull();
+    expect(await denied.json()).toMatchObject({ authRequired: true, authType: 'custom' });
     expect((await fetch(`${base}/api/meta`, { headers: { 'x-token': 'yes' } })).status).toBe(200);
   });
 
